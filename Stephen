@@ -1,0 +1,97 @@
+<!DOCTYPE html><html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deriv Digit Matches Bot</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
+    h1 { color: #333; }
+    input, button { padding: 10px; margin: 5px; }
+    #log { background: #fff; padding: 10px; border: 1px solid #ccc; height: 200px; overflow-y: scroll; }
+  </style>
+</head>
+<body>
+  <h1>Deriv Digit Matches Bot</h1>
+  <div>
+    <label>Stake: <input type="number" id="stake" value="1" /></label>
+    <label>Sample Size: <input type="number" id="sampleSize" value="20" /></label>
+    <button onclick="startBot()">Start Bot</button>
+    <button onclick="stopBot()">Stop Bot</button>
+  </div>
+  <div id="log"></div>  <script>
+    let ws, ticks = [], running = false;
+
+    function log(msg) {
+      const logEl = document.getElementById("log");
+      logEl.innerHTML += msg + "<br>";
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function connect() {
+      ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
+      ws.onopen = () => {
+        log("Connected to Deriv API");
+        ws.send(JSON.stringify({ ticks: "R_100" }));
+      };
+
+      ws.onmessage = (msg) => {
+        const data = JSON.parse(msg.data);
+        if (data.tick) {
+          const digit = parseInt(data.tick.quote.toString().slice(-1));
+          ticks.push(digit);
+          if (ticks.length > parseInt(document.getElementById("sampleSize").value)) {
+            ticks.shift();
+          }
+          if (running) {
+            tradeBestDigit();
+          }
+        }
+      };
+    }
+
+    function getLeastFrequentDigit() {
+      const counts = Array(10).fill(0);
+      ticks.forEach(d => counts[d]++);
+      let min = Math.min(...counts);
+      return counts.indexOf(min);
+    }
+
+    function tradeBestDigit() {
+      const digit = getLeastFrequentDigit();
+      const stake = parseFloat(document.getElementById("stake").value);
+
+      const proposal = {
+        proposal: 1,
+        amount: stake,
+        basis: "stake",
+        contract_type: "DIGITMATCH",
+        currency: "USD",
+        duration: 1,
+        duration_unit: "t",
+        symbol: "R_100",
+        barrier: digit
+      };
+      ws.send(JSON.stringify(proposal));
+
+      ws.onmessage = (msg) => {
+        const data = JSON.parse(msg.data);
+        if (data.proposal) {
+          ws.send(JSON.stringify({ buy: data.proposal.id, price: stake }));
+          log("Trading on digit: " + digit);
+        }
+      };
+    }
+
+    function startBot() {
+      running = true;
+      connect();
+      log("Bot started");
+    }
+
+    function stopBot() {
+      running = false;
+      if (ws) ws.close();
+      log("Bot stopped");
+    }
+  </script></body>
+</html>
